@@ -26,4 +26,11 @@ public class SenderMessageIDsPair {
         // Cantor pairing function
         return (this.sourceId + this.messageId) * (this.sourceId + this.messageId + 1) / 2 + this.sourceId;
     }
+
+    @Override
+    public boolean equals(Object obj) {
+        SenderMessageIDsPair senderMessageIDsPair = (SenderMessageIDsPair) obj;
+        return this.sourceId == senderMessageIDsPair.getSourceId() &&
+                this.messageId == senderMessageIDsPair.getMessageId();
+    }
 }

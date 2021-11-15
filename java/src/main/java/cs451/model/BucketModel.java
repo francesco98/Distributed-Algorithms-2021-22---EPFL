@@ -4,15 +4,13 @@ import cs451.Constants;
 
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 /*
     Defines a message that can be sent or has been received.
  */
-public class MessageModel {
+public class BucketModel implements Comparable<BucketModel> {
 
     // IPAddress and port from which a message has been received or to which a message must be sent.
     private AddressPortPair addressPortPair;
@@ -20,9 +18,11 @@ public class MessageModel {
     private final int senderId;
     private int totalBytes;
 
+    private int smallerMessageId = Integer.MAX_VALUE;
+
     private final List<PacketModel> packetModelList;
 
-    public MessageModel(AddressPortPair addressPortPair, int senderId, PacketModel packetModel) {
+    public BucketModel(AddressPortPair addressPortPair, int senderId, PacketModel packetModel) {
         this.addressPortPair = addressPortPair;
         this.senderId = senderId;
 
@@ -33,7 +33,7 @@ public class MessageModel {
     }
 
     // Receiving a packet
-    public MessageModel(byte[] messageBytes) {
+    public BucketModel(byte[] messageBytes) {
         this.totalBytes = Integer.BYTES;
         this.packetModelList = new ArrayList<>();
 
@@ -42,7 +42,7 @@ public class MessageModel {
         this.senderId = bytes.getInt();
         int nextPacketSize = bytes.getInt();
 
-        while(nextPacketSize > 0) {
+        while (nextPacketSize > 0) {
             byte[] packetBytes = new byte[nextPacketSize];
             bytes.get(packetBytes, 0, nextPacketSize);
 
@@ -64,17 +64,17 @@ public class MessageModel {
         return addressPortPair.getPort();
     }
 
-    public int getSenderId() {
-        return senderId;
-    }
-
     public void addPacket(PacketModel packetModel) {
+        if(packetModel.getMessageId() < smallerMessageId) {
+            this.smallerMessageId = packetModel.getMessageId();
+        }
+
         this.packetModelList.add(packetModel);
         this.totalBytes += packetModel.getPacketSize() + Integer.BYTES;
     }
 
     public boolean isFull(PacketModel packetModel) {
-        return this.totalBytes + packetModel.getPacketSize() + Integer.BYTES >= Constants.MAX_MESSAGE_LEN;
+        return this.totalBytes + packetModel.getPacketSize() + Integer.BYTES >= Constants.MAX_BUCKET_LEN;
     }
 
     public List<PacketModel> getPacketModelList() {
@@ -85,12 +85,20 @@ public class MessageModel {
         return totalBytes;
     }
 
+    public PacketModel getFirst() {
+        return this.packetModelList.get(0);
+    }
+
+    public PacketModel getLast() {
+        return this.packetModelList.get(this.packetModelList.size() - 1);
+    }
+
     public byte[] toBytes() {
         ByteBuffer bytes = ByteBuffer.allocate(this.totalBytes);
 
         bytes.putInt(senderId);
 
-        for(PacketModel packetModel : packetModelList) {
+        for (PacketModel packetModel : packetModelList) {
             bytes.putInt(packetModel.getPacketSize());
             bytes.put(packetModel.toBytes());
         }
@@ -98,5 +106,12 @@ public class MessageModel {
         return bytes.array();
     }
 
+    private Integer getSmallerMessageId() {
+        return smallerMessageId;
+    }
 
+    @Override
+    public int compareTo(BucketModel o) {
+        return this.getSmallerMessageId().compareTo(o.getSmallerMessageId());
+    }
 }

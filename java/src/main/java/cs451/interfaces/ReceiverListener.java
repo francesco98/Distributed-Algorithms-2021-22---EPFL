@@ -1,7 +1,5 @@
 package cs451.interfaces;
 
-import cs451.model.MessageModel;
-
 import java.net.DatagramPacket;
 
 /*

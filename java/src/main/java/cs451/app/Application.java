@@ -5,7 +5,9 @@ import cs451.Host;
 import cs451.Parser;
 import cs451.interfaces.DeliverInterface;
 import cs451.interfaces.SendInterface;
+import cs451.perfectlink.Pp2pDeliver;
 import cs451.udp.UDPReceiverService;
+import cs451.uniformreliable.UrbDeliver;
 import cs451.util.AbstractConfig;
 import cs451.util.AbstractPrimitive;
 
@@ -27,8 +29,7 @@ import java.util.concurrent.*;
     It implements the functions to shutdown all threads and to finalize the log
  */
 
-public class Application<C extends AbstractConfig, S extends AbstractPrimitive & SendInterface, D extends AbstractPrimitive & DeliverInterface> {
-
+public class Application<C extends AbstractConfig, S extends AbstractPrimitive & SendInterface> {
     //Configuration for a specific protocol (read from file)
     private final C config;
 
@@ -49,11 +50,13 @@ public class Application<C extends AbstractConfig, S extends AbstractPrimitive &
     private final ThreadPoolExecutor deliveryThreads;
     private final ThreadPoolExecutor ackThreads;
 
+    private final ThreadPoolExecutor senderThread;
+    private final ThreadPoolExecutor reBroadcastThread;
 
-    public Application(Class<C> configType, Class<S> sendType, Class<D> deliverType, Parser parser) throws NoSuchMethodException, IllegalAccessException, InvocationTargetException, InstantiationException, SocketException {
+
+    public Application(Class<C> configType, Class<S> sendType, Parser parser) throws NoSuchMethodException, IllegalAccessException, InvocationTargetException, InstantiationException, SocketException {
         Constructor<C> configConstructor = configType.getConstructor(String.class);
-        Constructor<S> sendConstructor = sendType.getConstructor(Host.class, Set.class, ThreadPoolExecutor.class);
-        Constructor<D> deliverConstructor = deliverType.getConstructor(Host.class, Set.class, ThreadPoolExecutor.class);
+        Constructor<S> sendConstructor = sendType.getConstructor(Host.class, List.class, Set.class, ThreadPoolExecutor.class);
 
         this.log = Collections.synchronizedSet(new LinkedHashSet<>());
         this.outputLogFile = parser.output();
@@ -63,15 +66,18 @@ public class Application<C extends AbstractConfig, S extends AbstractPrimitive &
 
         assert myHost != null;
 
+        this.senderThread = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
+        this.reBroadcastThread = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
         this.coreThreads = (ThreadPoolExecutor) Executors.newFixedThreadPool(Constants.CORE_THREAD_POOL_SIZE);
         this.ackThreads = (ThreadPoolExecutor) Executors.newFixedThreadPool(Constants.ACK_THREAD_POOL_SIZE);
         this.deliveryThreads = (ThreadPoolExecutor) Executors.newFixedThreadPool(Constants.DELIVERY_THREAD_POOL_SIZE);
 
         this.config = configConstructor.newInstance(parser.config());
 
+        UrbDeliver.setReBroadcastThread(this.reBroadcastThread);
 
-        D deliver = deliverConstructor.newInstance(this.myHost, this.log, this.deliveryThreads);
-        this.send = sendConstructor.newInstance(this.myHost, this.log, this.ackThreads);
+        Pp2pDeliver deliver = new Pp2pDeliver(this.myHost, this.hosts, this.log, this.deliveryThreads);
+        this.send = sendConstructor.newInstance(this.myHost, this.hosts, this.log, this.ackThreads);
 
         if (!coreThreads.isShutdown()) {
             // Listening on specified port
@@ -80,6 +86,10 @@ public class Application<C extends AbstractConfig, S extends AbstractPrimitive &
             // Sending packets
             coreThreads.execute(send::send);
         }
+    }
+
+    public void sendMessage(Runnable action) {
+        this.senderThread.execute(action);
     }
 
     public C getConfig() {
@@ -115,6 +125,12 @@ public class Application<C extends AbstractConfig, S extends AbstractPrimitive &
 
         if (coreThreads != null)
             coreThreads.shutdownNow();
+
+        if(senderThread != null)
+            senderThread.shutdown();
+
+        if(reBroadcastThread != null)
+            reBroadcastThread.shutdown();
     }
 
     // Write the log queue in a file

@@ -2,7 +2,7 @@ package cs451.udp;
 
 import cs451.Constants;
 import cs451.interfaces.SenderListener;
-import cs451.model.MessageModel;
+import cs451.model.BucketModel;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -21,11 +21,11 @@ public class UDPSenderService implements Closeable {
     private static final Lock lock = new ReentrantLock();
     private static final Condition isAvailable = lock.newCondition();
 
-    private final MessageModel messageModel;
+    private final BucketModel messageModel;
     private final SenderListener senderListener;
     private final DatagramSocket datagramSocket;
 
-    public static UDPSenderService getInstance(MessageModel messageModel, SenderListener senderListener) throws SocketException, InterruptedException {
+    public static UDPSenderService getInstance(BucketModel messageModel, SenderListener senderListener) throws SocketException, InterruptedException {
         lock.lock();
         try {
             while (OPEN_SOCKET >= Constants.OPEN_SOCKET_LIMIT) {
@@ -38,7 +38,7 @@ public class UDPSenderService implements Closeable {
         return new UDPSenderService(messageModel, senderListener);
     }
 
-    private UDPSenderService(MessageModel messageModel, SenderListener senderListener) throws SocketException {
+    private UDPSenderService(BucketModel messageModel, SenderListener senderListener) throws SocketException {
         this.messageModel = messageModel;
         this.senderListener = senderListener;
         this.datagramSocket = new DatagramSocket();
@@ -50,8 +50,8 @@ public class UDPSenderService implements Closeable {
         try {
             // Prepare the packet
             DatagramPacket datagramPacket = new DatagramPacket(
-                    messageModel.getPacket().toBytes(),
-                    messageModel.getPacket().getPacketSize(),
+                    messageModel.toBytes(),
+                    messageModel.getTotalBytes(),
                     messageModel.getIPAddress(),
                     messageModel.getPort());
 

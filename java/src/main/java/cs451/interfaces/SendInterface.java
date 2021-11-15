@@ -1,6 +1,5 @@
 package cs451.interfaces;
 
-import cs451.model.MessageModel;
 import cs451.model.PacketModel;
 
 /*

@@ -2,8 +2,6 @@ package cs451.udp;
 
 import cs451.Constants;
 import cs451.interfaces.ReceiverListener;
-import cs451.model.MessageModel;
-import cs451.model.PacketModel;
 
 import java.io.IOException;
 import java.net.DatagramPacket;
@@ -27,12 +25,9 @@ public class UDPReceiverService implements Runnable {
     public void run() {
         while(!Thread.interrupted()) {
             try {
-                byte[] receivedBytes = new byte[Constants.MAX_PACKET_LEN];
-                DatagramPacket datagramPacket = new DatagramPacket(receivedBytes, Constants.MAX_PACKET_LEN);
+                byte[] receivedBytes = new byte[Constants.MAX_BUCKET_LEN];
+                DatagramPacket datagramPacket = new DatagramPacket(receivedBytes, Constants.MAX_BUCKET_LEN);
                 datagramSocket.receive(datagramPacket);
-
-
-
 
                 // Notify the event (to deliver it)
                 receiverListener.onReceive(datagramPacket);

@@ -2,6 +2,7 @@ package cs451.util;
 
 import cs451.Host;
 
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ThreadPoolExecutor;
 
@@ -10,12 +11,14 @@ import java.util.concurrent.ThreadPoolExecutor;
  */
 public abstract class AbstractPrimitive {
     protected final Host host;
+    protected final List<Host> hosts;
     private final Set<String> log;
     private final ThreadPoolExecutor executorService;
 
-    public AbstractPrimitive(Host host, Set<String> log, ThreadPoolExecutor executorService) {
+    public AbstractPrimitive(Host host, List<Host> hosts, Set<String> log, ThreadPoolExecutor executorService) {
         this.host = host;
         this.log = log;
+        this.hosts = hosts;
         this.executorService = executorService;
     }
 

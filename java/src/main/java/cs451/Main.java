@@ -2,11 +2,16 @@ package cs451;
 
 import cs451.app.Application;
 import cs451.app.ProtocolType;
-import cs451.model.MessageModel;
+import cs451.besteffort.BebSend;
+import cs451.fifo.FIFOSend;
+import cs451.model.AddressPortPair;
 import cs451.model.PacketModel;
-import cs451.perfectlink.Pp2pDeliver;
 import cs451.perfectlink.Pp2pSend;
+import cs451.uniformreliable.UrbSend;
+import cs451.util.BestEffortConfig;
+import cs451.util.FIFOConfig;
 import cs451.util.PerfectLinkConfig;
+import cs451.util.UniformReliableConfig;
 
 import java.lang.reflect.InvocationTargetException;
 import java.net.InetAddress;
@@ -15,19 +20,19 @@ import java.net.UnknownHostException;
 
 public class Main {
     // It stores the running application
-    private static Application<PerfectLinkConfig, Pp2pSend, Pp2pDeliver> app;
+    private static Application<?, ?> app;
 
     private static void handleSignal() {
         // Immediately stop network packet processing
         System.out.println("Immediately stopping network packet processing.");
 
-        if(app != null)
+        if (app != null)
             app.shutdown();
 
         // Write/flush output file if necessary
         System.out.println("Writing output.");
 
-        if(app != null)
+        if (app != null)
             app.finalizeLog();
     }
 
@@ -72,15 +77,14 @@ public class Main {
         System.out.println(parser.config() + "\n");
 
         try {
+            System.out.println("Doing some initialization\n");
+
             if (Constants.PROTOCOL_TYPE == ProtocolType.PERFECT_LINKS) {
-
-                System.out.println("Doing some initialization\n");
-
                 // Init the app
-                app = new Application<>(PerfectLinkConfig.class, Pp2pSend.class, Pp2pDeliver.class, parser);
+                app = new Application<>(PerfectLinkConfig.class, Pp2pSend.class, parser);
 
                 // Getting the receiver
-                Host receiver = app.findHostById(app.getConfig().getReceiverId());
+                Host receiver = app.findHostById(((PerfectLinkConfig) app.getConfig()).getReceiverId());
 
                 System.out.println("Broadcasting and delivering messages...\n");
 
@@ -88,19 +92,57 @@ public class Main {
                 if (app.getMyHost().getId() != receiver.getId()) {
                     for (int i = 1; i <= app.getConfig().getNumberOfMessages(); i++) {
                         try {
-                            PacketModel packetModel = new PacketModel(app.getMyHost().getId(), receiver.getId(), i, i + "");
-                            MessageModel messageModel = new MessageModel(
-                                    InetAddress.getByName(receiver.getIp()), receiver.getPort(), packetModel);
-
-                            app.getSend().add(messageModel);
+                            PacketModel packetModel = new PacketModel(app.getMyHost().getId(), i, i + "");
+                            packetModel.setDestinationId(receiver.getId());
+                            AddressPortPair addressPortPair = new AddressPortPair(InetAddress.getByName(receiver.getIp()), receiver.getPort());
+                            app.sendMessage(() -> {
+                                ((Pp2pSend) app.getSend()).blockingAdd(addressPortPair, packetModel);
+                            });
                         } catch (UnknownHostException e) {
                             System.out.println("Problem for host: " + app.getMyHost().getId() + " for packet: " + i);
                         }
                     }
                 }
+            } else if (Constants.PROTOCOL_TYPE == ProtocolType.BEST_EFFORT_BROADCAST) {
+                // Init the app
+                app = new Application<>(BestEffortConfig.class, BebSend.class, parser);
+
+                System.out.println("Broadcasting and delivering messages...\n");
+
+                for (int i = 1; i <= app.getConfig().getNumberOfMessages(); i++) {
+                    PacketModel packetModel = new PacketModel(app.getMyHost().getId(), i, i + "");
+                    app.sendMessage(() -> {
+                        ((BebSend) app.getSend()).blockingAdd(packetModel);
+                    });
+                }
+            } else if (Constants.PROTOCOL_TYPE == ProtocolType.UNIFORM_RELIABLE_BROADCAST) {
+                // Init the app
+                app = new Application<>(UniformReliableConfig.class, UrbSend.class, parser);
+
+                System.out.println("Broadcasting and delivering messages...\n");
+
+                for (int i = 1; i <= app.getConfig().getNumberOfMessages(); i++) {
+                    PacketModel packetModel = new PacketModel(app.getMyHost().getId(), i, i + "");
+                    app.sendMessage(() -> {
+                        ((UrbSend) app.getSend()).blockingAdd(packetModel);
+                    });
+                }
+            } else if(Constants.PROTOCOL_TYPE == ProtocolType.FIFO_BROADCAST) {
+                // Init the app
+                app = new Application<>(FIFOConfig.class, FIFOSend.class, parser);
+
+                System.out.println("Broadcasting and delivering messages...\n");
+
+                for (int i = 1; i <= app.getConfig().getNumberOfMessages(); i++) {
+                    PacketModel packetModel = new PacketModel(app.getMyHost().getId(), i, i + "");
+                    app.sendMessage(() -> {
+                        ((FIFOSend) app.getSend()).blockingAdd(packetModel);
+                    });
+                }
             }
 
         } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException | InstantiationException | SocketException e) {
+            e.printStackTrace();
             System.out.println("Process: " + parser.myId() + " cannot be instantiated \n");
         }
 
