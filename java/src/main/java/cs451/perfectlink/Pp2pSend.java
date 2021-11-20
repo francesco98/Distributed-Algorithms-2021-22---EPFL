@@ -4,23 +4,21 @@ import cs451.Constants;
 import cs451.Host;
 import cs451.interfaces.SendInterface;
 import cs451.interfaces.SenderListener;
+import cs451.interfaces.Writer;
 import cs451.model.AddressPortPair;
 import cs451.model.BucketModel;
 import cs451.model.PacketModel;
 import cs451.udp.UDPSenderService;
 import cs451.util.AbstractPrimitive;
 
-import java.io.IOException;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.function.IntUnaryOperator;
 
 /*
     It defines the Pp2pSend primitive.
@@ -30,33 +28,67 @@ public class Pp2pSend extends AbstractPrimitive implements SendInterface {
     // The queue of messages to be sent
     private final ConcurrentHashMap<AddressPortPair, LinkedBlockingDeque<BucketModel>> bucketsQueue;
 
-    private int lastMessageAdded;
-    private int lastMessageSent;
+    private final ConcurrentHashMap<AddressPortPair, AtomicInteger> totalMessagesToSent;
+    private final ConcurrentHashMap<AddressPortPair, AtomicInteger> myMessagesToSent;
+
+    private final Set<Integer> broadcastMessages;
 
     private final Lock lock = new ReentrantLock();
-    private final Condition condition = lock.newCondition();
 
-    public Pp2pSend(Host host, List<Host> hosts, Set<String> log, ThreadPoolExecutor executorService) {
-        super(host, hosts, log, executorService);
+    private final Condition totalCondition = lock.newCondition();
+    private final Condition ownCondition = lock.newCondition();
 
+    public Pp2pSend(Host host, List<Host> hosts, Set<String> log, Writer writer, ThreadPoolExecutor executorService) {
+        super(host, hosts, log, writer, executorService);
         this.bucketsQueue = new ConcurrentHashMap<>();
+        this.totalMessagesToSent = new ConcurrentHashMap<>();
+        this.myMessagesToSent = new ConcurrentHashMap<>();
 
-        this.lastMessageSent = 0;
-        this.lastMessageAdded = 0;
+        this.broadcastMessages = Collections.synchronizedSet(new LinkedHashSet<>());
+
+        for (Host h : hosts) {
+            try {
+                InetAddress inetAddress = InetAddress.getByName(h.getIp());
+                AddressPortPair addressPortPair = new AddressPortPair(inetAddress, h.getPort());
+
+                bucketsQueue.put(addressPortPair, new LinkedBlockingDeque<>());
+
+                totalMessagesToSent.put(addressPortPair, new AtomicInteger(0));
+                myMessagesToSent.put(addressPortPair, new AtomicInteger(0));
+
+            } catch (UnknownHostException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void addBucketFirst(final BucketModel bucketModel) {
+        this.bucketsQueue.get(bucketModel.getAddressPortPair()).addFirst(bucketModel);
     }
 
     private void addBucket(final BucketModel bucketModel) {
         this.bucketsQueue.get(bucketModel.getAddressPortPair()).addLast(bucketModel);
     }
 
+    private boolean isQueueFree(boolean isOwn) {
+        int nFreeQueue = 0;
+        for (AtomicInteger queueSize : (isOwn ? this.myMessagesToSent.values() : this.totalMessagesToSent.values())) {
+            if (queueSize.get() < Constants.MAX_QUEUE_SIZE / (isOwn ? this.hosts.size() : 1))
+                nFreeQueue++;
+        }
+
+        return nFreeQueue > (this.hosts.size() / 2);
+    }
+
     public void blockingAdd(final AddressPortPair addressPortPair, final PacketModel packetModel) {
         lock.lock();
 
         try {
-            this.lastMessageAdded = packetModel.getMessageId();
-
-            if (this.lastMessageAdded - this.lastMessageSent > Constants.MAX_QUEUE_PACKETS) {
-                condition.await();
+            if (!isQueueFree(false)) {
+                totalCondition.await();
+            }
+            if (packetModel.isOwn() && !isQueueFree(true)) {
+                ownCondition.await();
             }
             this.add(addressPortPair, packetModel);
         } catch (InterruptedException e) {
@@ -67,9 +99,7 @@ public class Pp2pSend extends AbstractPrimitive implements SendInterface {
 
     }
 
-    public void add(final AddressPortPair addressPortPair, final PacketModel packetModel) {
-        bucketsQueue.putIfAbsent(addressPortPair, new LinkedBlockingDeque<>());
-
+    private void add(final AddressPortPair addressPortPair, final PacketModel packetModel) {
         try {
             BucketModel bucketModel = this.bucketsQueue.get(addressPortPair).pollLast();
             if (bucketModel != null) {
@@ -78,10 +108,15 @@ public class Pp2pSend extends AbstractPrimitive implements SendInterface {
                     addBucket(new BucketModel(addressPortPair, host.getId(), packetModel));
                 } else {
                     bucketModel.addPacket(packetModel);
-                    bucketsQueue.get(addressPortPair).add(bucketModel);
+                    bucketsQueue.get(addressPortPair).addLast(bucketModel);
                 }
             } else {
                 addBucket(new BucketModel(addressPortPair, host.getId(), packetModel));
+            }
+
+            this.totalMessagesToSent.get(addressPortPair).incrementAndGet();
+            if (packetModel.isOwn()) {
+                this.myMessagesToSent.get(addressPortPair).incrementAndGet();
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -103,31 +138,39 @@ public class Pp2pSend extends AbstractPrimitive implements SendInterface {
             if (bucketModel.getFirst().getDestinationId() != packetModel.getSourceId() ||
                     bucketModel.getFirst().getOriginalSourceId() != packetModel.getOriginalSourceId() ||
                     !bucketModel.getFirst().getMessageId().equals(packetModel.getMessageId())) {
-                this.addBucket(bucketModel);
+                this.addBucketFirst(bucketModel);
             } else {
-                // System.out.println("Ack received from " + packetModel.getSourceId() + " for message: " + bucketModel.getFirst().getMessageId() + " original sent by: " + bucketModel.getFirst().getOriginalSourceId());
-                PacketModel lastPacket = bucketModel.getLast();
+                this.myMessagesToSent.get(bucketModel.getAddressPortPair()).addAndGet(-bucketModel.getOwnPackets().size());
+                this.totalMessagesToSent.get(bucketModel.getAddressPortPair()).addAndGet(-bucketModel.getPacketModelList().size());
 
-                if (lastPacket.getSourceId() == lastPacket.getOriginalSourceId() && lastPacket.getMessageId() > this.lastMessageSent) {
-                    lock.lock();
-                    try {
-                        this.lastMessageSent = lastPacket.getMessageId();
-                        if (this.lastMessageAdded - this.lastMessageSent <= Constants.MAX_QUEUE_PACKETS) {
-                            condition.signal();
-                        }
-                    } finally {
-                        lock.unlock();
+                lock.lock();
+                try {
+                    if (isQueueFree(false)) {
+                        totalCondition.signal();
                     }
+                    if (isQueueFree(true)) {
+                        ownCondition.signal();
+                    }
+                } finally {
+                    lock.unlock();
                 }
+
+                // System.out.println("Ack received from " + packetModel.getSourceId() + " for message: " + bucketModel.getFirst().getMessageId() + " original sent by: " + bucketModel.getFirst().getOriginalSourceId());
             }
         } catch (Exception e) {
-            //System.out.println("Ack timeout for: " + bucketModel.getPacket().getMessageId());
-            this.addBucket(bucketModel);
+            System.out.println("Ack timeout for: " + bucketModel.getFirst().getMessageId() + " to: " + bucketModel.getAddressPortPair().getPort());
+            this.addBucketFirst(bucketModel);
         }
     }
 
     @Override
     public void send() {
+        try {
+            Thread.sleep(500);
+        } catch (InterruptedException e) {
+            System.out.println("Sender thread cannot start");
+        }
+
         while (!Thread.interrupted()) {
             this.bucketsQueue.forEach((addressPortPair, queue) -> {
                 try {
@@ -138,24 +181,31 @@ public class Pp2pSend extends AbstractPrimitive implements SendInterface {
                         if (messageModel != null) {
                             UDPSenderService.getInstance(messageModel, new SenderListener() {
                                 @Override
-                                public void onSent(UDPSenderService service, BucketModel messageModel) {
-                                    // Ack is async
-                                    start(() -> waitForAck(service, messageModel));
-
-                                    if (messageModel.getFirst().getOriginalSourceId() == messageModel.getFirst().getSourceId()) {
-                                        for (PacketModel packetModel : messageModel.getPacketModelList())
-                                            log(toLine(packetModel));
+                                public void onSending(BucketModel bucketModel) {
+                                    synchronized (Pp2pSend.this) {
+                                        for (PacketModel packetModel : bucketModel.getPacketModelList()) {
+                                            if (packetModel.getOriginalSourceId() == packetModel.getSourceId() && Pp2pSend.this.broadcastMessages.add(packetModel.getMessageId())) {
+                                                log(toLine(packetModel));
+                                            }
+                                        }
                                     }
-
                                 }
 
                                 @Override
-                                public void onError(BucketModel messageModel) {
+                                public void onSent(UDPSenderService service, BucketModel bucketSent) {
+                                    // Ack is async
+                                    start(() -> waitForAck(service, bucketSent));
+                                }
+
+                                @Override
+                                public void onError(BucketModel bucketError) {
                                     // If the message has not sent successfully, add it to the top of the queue.
-                                    Pp2pSend.this.addBucket(messageModel);
+                                    Pp2pSend.this.addBucketFirst(bucketError);
                                 }
                             }).prepareAndSend();
                         }
+
+                        Thread.sleep(10);
                     }
                 } catch (InterruptedException | SocketException e) {
                     System.out.println("Sender thread has been stopped");

@@ -21,25 +21,26 @@ public class UDPSenderService implements Closeable {
     private static final Lock lock = new ReentrantLock();
     private static final Condition isAvailable = lock.newCondition();
 
-    private final BucketModel messageModel;
+    private final BucketModel bucketModel;
     private final SenderListener senderListener;
     private final DatagramSocket datagramSocket;
 
-    public static UDPSenderService getInstance(BucketModel messageModel, SenderListener senderListener) throws SocketException, InterruptedException {
+    public static UDPSenderService getInstance(BucketModel bucketModel, SenderListener senderListener) throws SocketException, InterruptedException {
         lock.lock();
         try {
             while (OPEN_SOCKET >= Constants.OPEN_SOCKET_LIMIT) {
+                // System.out.println("Blocked (2)");
                 isAvailable.await();
             }
         } finally {
             lock.unlock();
         }
 
-        return new UDPSenderService(messageModel, senderListener);
+        return new UDPSenderService(bucketModel, senderListener);
     }
 
-    private UDPSenderService(BucketModel messageModel, SenderListener senderListener) throws SocketException {
-        this.messageModel = messageModel;
+    private UDPSenderService(BucketModel bucketModel, SenderListener senderListener) throws SocketException {
+        this.bucketModel = bucketModel;
         this.senderListener = senderListener;
         this.datagramSocket = new DatagramSocket();
 
@@ -50,17 +51,18 @@ public class UDPSenderService implements Closeable {
         try {
             // Prepare the packet
             DatagramPacket datagramPacket = new DatagramPacket(
-                    messageModel.toBytes(),
-                    messageModel.getTotalBytes(),
-                    messageModel.getIPAddress(),
-                    messageModel.getPort());
+                    this.bucketModel.toBytes(),
+                    this.bucketModel.getTotalBytes(),
+                    this.bucketModel.getIPAddress(),
+                    this.bucketModel.getPort());
 
+            senderListener.onSending(this.bucketModel);
             datagramSocket.send(datagramPacket);
-            senderListener.onSent(this, messageModel);
+            senderListener.onSent(this, this.bucketModel);
 
         } catch (IOException exception) {
             // If the message is lost, it must be sent again.
-            senderListener.onError(messageModel);
+            senderListener.onError(bucketModel);
             this.close();
         }
     }
@@ -76,7 +78,7 @@ public class UDPSenderService implements Closeable {
             this.datagramSocket.close();
             OPEN_SOCKET--;
 
-            isAvailable.signalAll();
+            isAvailable.signal();
         } finally {
             lock.unlock();
         }

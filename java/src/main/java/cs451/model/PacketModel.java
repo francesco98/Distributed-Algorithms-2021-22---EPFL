@@ -5,6 +5,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /*
     Defines the structure of a packet and all the methods to convert it into bytes or making it from bytes.
@@ -65,7 +66,9 @@ public class PacketModel implements Serializable, Comparable<PacketModel> {
         return this.originalSenderMessageIDsPair.getSourceId();
     }
 
-    public int getSourceId() { return this.senderMessageIDsPair.getSourceId(); }
+    public int getSourceId() {
+        return this.senderMessageIDsPair.getSourceId();
+    }
 
     public int getDestinationId() {
         return destinationId;
@@ -96,7 +99,7 @@ public class PacketModel implements Serializable, Comparable<PacketModel> {
         bytes.putInt(getOriginalSourceId());
         bytes.putInt(getMessageId());
 
-        if(payload != null)
+        if (payload != null)
             bytes.put(payload.getBytes());
 
         return bytes.array();
@@ -108,10 +111,14 @@ public class PacketModel implements Serializable, Comparable<PacketModel> {
         bytes.putInt(getOriginalSourceId());
         bytes.putInt(getMessageId());
 
-        if(payload != null)
+        if (payload != null)
             bytes.put(payload.getBytes());
 
         return bytes.array();
+    }
+
+    public boolean isOwn() {
+        return this.getSourceId() == this.getOriginalSourceId();
     }
 
     public Long getId() {

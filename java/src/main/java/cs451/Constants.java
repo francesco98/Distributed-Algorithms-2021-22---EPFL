@@ -20,16 +20,17 @@ public class Constants {
     // indexes for config
     public static final int CONFIG_VALUE = 6;
 
-    public final static int MAX_QUEUE_PACKETS = 500;
-    public final static int MAX_BUCKET_LEN = 1500;
+    public final static int MAX_QUEUE_SIZE = 5000;
+
+    public final static int WRITE_LOG_LIMIT = 40000;
+    public final static int MAX_BUCKET_LEN = 65000;
     public static final ProtocolType PROTOCOL_TYPE = ProtocolType.FIFO_BROADCAST;
 
     public static final int ACK_TIMEOUT_MS = 500;
 
-    public static final int OPEN_SOCKET_LIMIT = 2;
+    public static final int OPEN_SOCKET_LIMIT = 1;
 
-    public static final int CORE_THREAD_POOL_SIZE = 2;
-    public static final int ACK_THREAD_POOL_SIZE = 4;
-    public static final int DELIVERY_THREAD_POOL_SIZE = 8;
+    public static final int ACK_THREAD_POOL_SIZE = 2;
+    public static final int DELIVERY_THREAD_POOL_SIZE = 4;
 
 }

@@ -2,8 +2,8 @@ package cs451.fifo;
 
 import cs451.Host;
 import cs451.interfaces.DeliverInterface;
+import cs451.interfaces.Writer;
 import cs451.model.PacketModel;
-import cs451.model.SenderMessageIDsPair;
 import cs451.util.AbstractPrimitive;
 
 import java.util.List;
@@ -17,8 +17,8 @@ public class FIFODeliver extends AbstractPrimitive implements DeliverInterface<P
     private final ConcurrentHashMap<Integer, PriorityBlockingQueue<PacketModel>> messagesToDeliver;
     private final ConcurrentHashMap<Integer, AtomicInteger> lastDeliveredPacket;
 
-    public FIFODeliver(Host host, List<Host> hosts, Set<String> log, ThreadPoolExecutor executorService) {
-        super(host, hosts, log, executorService);
+    public FIFODeliver(Host host, List<Host> hosts, Set<String> log, Writer writer, ThreadPoolExecutor executorService) {
+        super(host, hosts, log, writer, executorService);
 
         this.messagesToDeliver = new ConcurrentHashMap<>();
         this.lastDeliveredPacket = new ConcurrentHashMap<>();

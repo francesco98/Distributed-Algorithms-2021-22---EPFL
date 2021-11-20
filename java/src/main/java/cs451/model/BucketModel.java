@@ -6,6 +6,7 @@ import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /*
     Defines a message that can be sent or has been received.
@@ -79,6 +80,10 @@ public class BucketModel implements Comparable<BucketModel> {
 
     public List<PacketModel> getPacketModelList() {
         return packetModelList;
+    }
+
+    public List<PacketModel> getOwnPackets() {
+        return  packetModelList.stream().filter(PacketModel::isOwn).collect(Collectors.toList());
     }
 
     public int getTotalBytes() {

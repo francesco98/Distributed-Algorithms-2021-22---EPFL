@@ -3,8 +3,8 @@ package cs451.app;
 import cs451.Constants;
 import cs451.Host;
 import cs451.Parser;
-import cs451.interfaces.DeliverInterface;
 import cs451.interfaces.SendInterface;
+import cs451.interfaces.Writer;
 import cs451.perfectlink.Pp2pDeliver;
 import cs451.udp.UDPReceiverService;
 import cs451.uniformreliable.UrbDeliver;
@@ -17,7 +17,9 @@ import java.lang.reflect.InvocationTargetException;
 import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -29,7 +31,7 @@ import java.util.concurrent.*;
     It implements the functions to shutdown all threads and to finalize the log
  */
 
-public class Application<C extends AbstractConfig, S extends AbstractPrimitive & SendInterface> {
+public class Application<C extends AbstractConfig, S extends AbstractPrimitive & SendInterface> implements Writer {
     //Configuration for a specific protocol (read from file)
     private final C config;
 
@@ -44,22 +46,29 @@ public class Application<C extends AbstractConfig, S extends AbstractPrimitive &
     private final Set<String> log;
 
     // Core pool threads to receive and send packets
-    private final ThreadPoolExecutor coreThreads;
+    private final ThreadPoolExecutor coreThreadSender;
+    private final ThreadPoolExecutor coreThreadDeliver;
 
     // Thread pool to be used from the entire Application
     private final ThreadPoolExecutor deliveryThreads;
     private final ThreadPoolExecutor ackThreads;
 
     private final ThreadPoolExecutor senderThread;
-    private final ThreadPoolExecutor reBroadcastThread;
+    private final ThreadPoolExecutor addBroadcastMessagesThread;
 
 
     public Application(Class<C> configType, Class<S> sendType, Parser parser) throws NoSuchMethodException, IllegalAccessException, InvocationTargetException, InstantiationException, SocketException {
         Constructor<C> configConstructor = configType.getConstructor(String.class);
-        Constructor<S> sendConstructor = sendType.getConstructor(Host.class, List.class, Set.class, ThreadPoolExecutor.class);
+        Constructor<S> sendConstructor = sendType.getConstructor(Host.class, List.class, Set.class, Writer.class, ThreadPoolExecutor.class);
 
         this.log = Collections.synchronizedSet(new LinkedHashSet<>());
         this.outputLogFile = parser.output();
+
+        try {
+            Files.deleteIfExists(Path.of(this.outputLogFile));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
 
         this.hosts = parser.hosts();
         this.myHost = findHostById(parser.myId());
@@ -67,24 +76,30 @@ public class Application<C extends AbstractConfig, S extends AbstractPrimitive &
         assert myHost != null;
 
         this.senderThread = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
-        this.reBroadcastThread = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
-        this.coreThreads = (ThreadPoolExecutor) Executors.newFixedThreadPool(Constants.CORE_THREAD_POOL_SIZE);
+       // this.reBroadcastThread = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
+        this.addBroadcastMessagesThread = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
+
+        this.coreThreadSender = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
+        this.coreThreadDeliver = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
+
         this.ackThreads = (ThreadPoolExecutor) Executors.newFixedThreadPool(Constants.ACK_THREAD_POOL_SIZE);
         this.deliveryThreads = (ThreadPoolExecutor) Executors.newFixedThreadPool(Constants.DELIVERY_THREAD_POOL_SIZE);
 
         this.config = configConstructor.newInstance(parser.config());
 
-        UrbDeliver.setReBroadcastThread(this.reBroadcastThread);
+        UrbDeliver.setReBroadcastThreads(/*this.reBroadcastThread, */this.addBroadcastMessagesThread);
 
-        Pp2pDeliver deliver = new Pp2pDeliver(this.myHost, this.hosts, this.log, this.deliveryThreads);
-        this.send = sendConstructor.newInstance(this.myHost, this.hosts, this.log, this.ackThreads);
+        Pp2pDeliver deliver = new Pp2pDeliver(this.myHost, this.hosts, this.log, this, this.deliveryThreads);
+        this.send = sendConstructor.newInstance(this.myHost, this.hosts, this.log, this, this.ackThreads);
 
-        if (!coreThreads.isShutdown()) {
+        if (!coreThreadDeliver.isShutdown()) {
             // Listening on specified port
-            coreThreads.execute(new UDPReceiverService(myHost.getPort(), deliver::deliver));
+            coreThreadDeliver.execute(new UDPReceiverService(myHost.getPort(), deliver::deliver));
+        }
 
+        if(!coreThreadSender.isShutdown()) {
             // Sending packets
-            coreThreads.execute(send::send);
+            coreThreadSender.execute(send::send);
         }
     }
 
@@ -123,14 +138,20 @@ public class Application<C extends AbstractConfig, S extends AbstractPrimitive &
         if (ackThreads != null)
             ackThreads.shutdownNow();
 
-        if (coreThreads != null)
-            coreThreads.shutdownNow();
+        if (coreThreadSender != null)
+            coreThreadSender.shutdownNow();
+
+        if (coreThreadDeliver != null)
+            coreThreadDeliver.shutdownNow();
 
         if(senderThread != null)
             senderThread.shutdown();
 
-        if(reBroadcastThread != null)
-            reBroadcastThread.shutdown();
+        /*if(reBroadcastThread != null)
+            reBroadcastThread.shutdown();*/
+
+        if(addBroadcastMessagesThread != null)
+            addBroadcastMessagesThread.shutdown();
     }
 
     // Write the log queue in a file
@@ -138,7 +159,8 @@ public class Application<C extends AbstractConfig, S extends AbstractPrimitive &
         if (this.outputLogFile != null && this.log != null) {
             synchronized (this.log) {
                 try {
-                    Files.write(Paths.get(this.outputLogFile), this.log, StandardCharsets.UTF_8);
+                    Files.write(Paths.get(this.outputLogFile), this.log, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                    this.log.clear();
                 } catch (IOException e) {
                     e.printStackTrace();
                 }

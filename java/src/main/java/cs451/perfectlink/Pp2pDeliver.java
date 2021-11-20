@@ -5,6 +5,7 @@ import cs451.Host;
 import cs451.app.ProtocolType;
 import cs451.besteffort.BebDeliver;
 import cs451.interfaces.DeliverInterface;
+import cs451.interfaces.Writer;
 import cs451.model.BucketModel;
 import cs451.model.PacketModel;
 import cs451.util.AbstractPrimitive;
@@ -22,9 +23,9 @@ public class Pp2pDeliver extends AbstractPrimitive implements DeliverInterface<D
     private final BebDeliver bebDeliver;
     private final Set<Long> delivered;
 
-    public Pp2pDeliver(Host host, List<Host> hosts, Set<String> log, ThreadPoolExecutor executorService) {
-        super(host, hosts, log, executorService);
-        this.bebDeliver = new BebDeliver(host, hosts, log, executorService);
+    public Pp2pDeliver(Host host, List<Host> hosts, Set<String> log, Writer writer, ThreadPoolExecutor executorService) {
+        super(host, hosts, log, writer, executorService);
+        this.bebDeliver = new BebDeliver(host, hosts, log, writer, executorService);
         this.delivered = Collections.synchronizedSet(new HashSet<>());
     }
 
@@ -39,8 +40,8 @@ public class Pp2pDeliver extends AbstractPrimitive implements DeliverInterface<D
                 // The acknowledgment packet is just the senderId who received the packet and the id of the message
                 PacketModel packetModel = new PacketModel(
                         host.getId(),
-                        receivedBucketModel.getPacketModelList().get(0).getOriginalSourceId(),
-                        receivedBucketModel.getPacketModelList().get(0).getMessageId());
+                        receivedBucketModel.getFirst().getOriginalSourceId(),
+                        receivedBucketModel.getFirst().getMessageId());
 
                 // The UDP ack packet is sent to the same address and port on which the packet is received
                 DatagramPacket ackPacket = new DatagramPacket(
@@ -49,7 +50,7 @@ public class Pp2pDeliver extends AbstractPrimitive implements DeliverInterface<D
                         datagramPacket.getAddress(),
                         datagramPacket.getPort());
 
-                // System.out.println("SENDING ACK TO: " + datagramPacket.getAddress().getHostAddress() + ":" + datagramPacket.getPort());
+                // System.out.println("SENDING ACK FOR: " + receivedBucketModel.getFirst().getMessageId() + " TO: " + receivedBucketModel.getFirst().getSourceId());
 
                 datagramSocket.send(ackPacket);
 
@@ -64,9 +65,8 @@ public class Pp2pDeliver extends AbstractPrimitive implements DeliverInterface<D
                     }
                 }
 
-            } catch (Exception exception) {
-                exception.printStackTrace();
-                System.out.println(Arrays.toString(datagramPacket.getData()));
+            } catch (Exception e) {
+                e.printStackTrace();
             }
         });
     }

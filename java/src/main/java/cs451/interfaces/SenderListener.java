@@ -7,6 +7,7 @@ import cs451.udp.UDPSenderService;
     It is used as listener when an UDP packet has been sent.
  */
 public interface SenderListener {
+    void onSending(BucketModel bucketModel);
     void onSent(UDPSenderService service, BucketModel messageModel);
     void onError(BucketModel senderService);
 }
